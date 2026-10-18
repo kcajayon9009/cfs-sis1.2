@@ -4,7 +4,7 @@
 // No database, no sessions: each question is answered on its own.
 
 // ---- settings (change these two only) ----
-const GEMINI_KEY   = 'AQ.Ab8RN6KU_UPJe-_ocdBjpVVXXwBi8xmaXYzlpaD3OtAjPtr5sA';   // from aistudio.google.com
+const GEMINI_KEY   = 'KUHA KAYO API KEY SA GEMINI';   // from aistudio.google.com
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';      // paste the name from models.php
 
 // ---- facts the bot is allowed to use (edit to match the real school) ----
