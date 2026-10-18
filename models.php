@@ -3,7 +3,7 @@
 // Open it in the browser once, copy a name, then DELETE this file.
 header('Content-Type: text/plain');
 
-const GEMINI_KEY = 'AQ.Ab8RN6KU_UPJe-_ocdBjpVVXXwBi8xmaXYzlpaD3OtAjPtr5sA';
+const GEMINI_KEY = 'KUHA KAYO SARILI NYONG API KEY SA GEMINI';
 
 $ch = curl_init('https://generativelanguage.googleapis.com/v1beta/models?pageSize=100');
 curl_setopt_array($ch, [
