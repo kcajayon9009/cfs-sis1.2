@@ -37,6 +37,9 @@ class ApiError extends Error { constructor(msg, status, data){ super(msg); this.
 
 async function api(path, opts){
   opts = opts || {};
+  if (location.protocol === 'file:'){
+    throw new ApiError('Open this portal through Apache at http://localhost/cfs-sis1.2/.', 0);
+  }
   const init = { method: opts.method || 'GET', credentials: 'same-origin', headers: {} };
   if (opts.json !== undefined){ init.method = opts.method || 'POST'; init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(opts.json); }
   if (opts.form){ init.method = 'POST'; init.body = opts.form; }
@@ -109,6 +112,12 @@ function selectPortalTab(name){
 function scrollToTypes(){ $('type-select-anchor').scrollIntoView({behavior:'smooth', block:'start'}); }
 
 // ---------- auth ----------
+function requireLoginUser(user){
+  if (!user || typeof user !== 'object' || typeof user.role !== 'string'){
+    throw new ApiError('The login API returned an invalid response. Open the portal through Apache at http://localhost/cfs-sis1.2/.', 502);
+  }
+  return user;
+}
 async function doRegister(){
   showMsg('auth-error', '');
   const name = $('reg-name').value.trim(), email = $('reg-email').value.trim();
@@ -130,7 +139,7 @@ async function doLogin(){
   if (!email || !pw) return showMsg('auth-error', 'Enter your email and password.');
   const btn = $('login-btn'); busy(btn, true, 'Signing in…');
   try {
-    const u = await api('api/auth/login.php', { json: { email: email, password: pw } });
+    const u = requireLoginUser(await api('api/auth/login.php', { json: { email: email, password: pw } }));
     state.user = u; $('login-password').value = '';
     if (u.role === 'guardian') await openPortal(); else await openStaff();
   } catch(e){ showMsg('auth-error', e.message); }
@@ -140,7 +149,7 @@ async function doStaffLogin(){
   showMsg('staff-error', '');
   const btn = $('staff-btn'); busy(btn, true, 'Signing in…');
   try {
-    const u = await api('api/auth/login.php', { json: { email: $('staff-email').value.trim(), password: $('staff-password').value } });
+    const u = requireLoginUser(await api('api/auth/login.php', { json: { email: $('staff-email').value.trim(), password: $('staff-password').value } }));
     if (u.role !== 'registrar' && u.role !== 'admin'){
       await api('api/auth/logout.php', { method: 'POST', json: {} }).catch(() => {});
       state.user = null;
@@ -356,7 +365,7 @@ function renderBilling(){
     '<td>' + peso(p.amount) + '</td>' +
     '<td><span class="status-badge ' + pcls[p.status] + '">' + plabel[p.status] + '</span>' +
       (p.status === 'rejected' && p.remarks ? '<span class="req-remark">' + esc(p.remarks) + '</span>' : '') +
-      ' <a class="receipt-link" href="api/uploads/file.php?type=payment&id=' + p.id + '" target="_blank" rel="noopener">View proof →</a></td></tr>'
+      ' <a class="receipt-link" href="api/uploads/file.php?type=payment&id=' + p.id + '" onclick="return openViewer(this,&quot;Payment proof&quot;)" target="_blank" rel="noopener">View proof →</a></td></tr>'
   ).join('') : '<tr><td colspan="5">No payments yet.</td></tr>';
 }
 
@@ -671,8 +680,9 @@ async function loadStaff(){
       grade: 'Grade ' + a.grade_level,
       type: a.enrollment_type === 'new' ? 'New' : 'Continuing',
       payment: a.status !== 'approved' ? 'noinv'
+              : (Number(a.fee_item_count) === 0 ? 'noinv'
              : (Number(a.pending_payments) > 0 ? 'pending'
-             : (cents(a.outstanding) <= 0 ? 'paid' : (cents(a.total_paid) > 0 ? 'pending' : 'unpaid'))),
+              : (cents(a.outstanding) <= 0 ? 'paid' : (cents(a.total_paid) > 0 ? 'pending' : 'unpaid')))),
       status: a.status, when: a.submitted_at || '', guardian: a.guardian_name + ' ' + a.guardian_email,
       pendingPayments: Number(a.pending_payments)
     }));
@@ -707,7 +717,7 @@ function setFilter(f){
 function renderRecords(){
   const q = ($('staff-search').value || '').trim().toLowerCase();
   const list = staffRows.filter(r => {
-    if (staffFilter === 'unpaid' && !(r.kind === 'app' && r.payment === 'unpaid')) return false;
+    if (staffFilter === 'unpaid' && !(r.kind === 'app' && ['noinv','unpaid'].includes(r.payment))) return false;
     if (staffFilter === 'pending' && !(r.kind === 'app' && ['submitted','pending_verification','needs_revision'].includes(r.status))) return false;
     if (staffFilter === 'screening' && r.kind !== 'screen') return false;
     if (q && !(r.name + ' ' + r.sub + ' ' + r.guardian).toLowerCase().includes(q)) return false;
@@ -773,7 +783,7 @@ function renderDrawer(d){
     const lbl = { pending:'Uploaded', verified:'Verified', rejected:'Rejected' }[x.status];
     return '<div class="doc-row"><span>' + DOC_LABELS[k] + (x.remarks ? '<span class="req-remark" style="color:var(--ink-400)">' + esc(x.remarks) + '</span>' : '') + '</span>' +
       '<span class="doc-actions"><span class="doc-status">' + lbl + '</span>' +
-      '<a class="mini-btn" href="api/uploads/file.php?type=document&id=' + x.id + '" target="_blank" rel="noopener">View</a>' +
+      '<a class="mini-btn" href="api/uploads/file.php?type=document&id=' + x.id + '" onclick="return openViewer(this,&quot;' + DOC_LABELS[k] + '&quot;)" target="_blank" rel="noopener">View</a>' +
       (x.status !== 'verified' ? '<button class="mini-btn ok" onclick="decideDoc(' + x.id + ',\'verified\')">Verify</button>' : '') +
       (x.status !== 'rejected' ? '<button class="mini-btn bad" onclick="decideDoc(' + x.id + ',\'rejected\')">Reject</button>' : '') +
       '</span></div>';
@@ -784,7 +794,7 @@ function renderDrawer(d){
     return '<div class="doc-row"><span>GCash · Ref# ' + esc(p.gcash_ref_no) + ' · ' + peso(p.amount) +
       (p.remarks ? '<span class="req-remark" style="color:var(--ink-400)">' + esc(p.remarks) + '</span>' : '') + '</span>' +
       '<span class="doc-actions"><span class="doc-status">' + lbl + '</span>' +
-      '<a class="mini-btn" href="api/uploads/file.php?type=payment&id=' + p.id + '" target="_blank" rel="noopener">Proof</a>' +
+      '<a class="mini-btn" href="api/uploads/file.php?type=payment&id=' + p.id + '" onclick="return openViewer(this,&quot;GCash payment proof&quot;)" target="_blank" rel="noopener">Proof</a>' +
       (p.status === 'pending' ? '<button class="mini-btn ok" onclick="decidePay(' + p.id + ',\'verified\')">Verify</button><button class="mini-btn bad" onclick="decidePay(' + p.id + ',\'rejected\')">Reject</button>' : '') +
       '</span></div>';
   }).join('') : (a.status === 'approved' ? '<div class="doc-row"><span>No payment submitted</span><span class="doc-status" style="color:var(--maroon-600)">Not yet paid</span></div>' : '<div class="doc-row"><span>No invoice yet</span><span class="doc-status">Issued on approval</span></div>');
@@ -822,13 +832,21 @@ function renderDrawer(d){
           '<button class="btn-flag" onclick="decideApp(\'flag\')">Flag for follow-up</button>' +
         '</div>' +
         '<button class="reject-link" onclick="decideApp(\'reject\')">Reject application</button>'
-      : '<p class="drawer-note">This application is already <strong>' + esc(APP_STATUS[a.status] || a.status) + '</strong>' + (a.status === 'rejected' || a.status === 'approved' ? ' and can no longer be changed.' : '.') + '</p>');
+      : '<p class="drawer-note">This application is already <strong>' + esc(APP_STATUS[a.status] || a.status) + '</strong>' + (a.status === 'rejected' || a.status === 'approved' ? ' and can no longer be changed.' : '.') + '</p>' +
+        (a.status === 'approved' && !d.fee_items.length ? '<div class="drawer-actions"><button class="btn-approve" onclick="sendInvoice()">Issue invoice</button></div>' : ''));
   drawerState.detail = d;
 }
 
 async function afterDrawerChange(msg){
   toast(msg);
   await Promise.all([loadDrawer(drawerState.id), loadStaff()]);
+}
+async function sendInvoice(){
+  showMsg('drawer-error', '');
+  try {
+    await api('api/registrar/send_invoice.php', { json: { application_id: drawerState.id } });
+    await afterDrawerChange('Invoice sent to the family.');
+  } catch(e){ showMsg('drawer-error', e.message); }
 }
 async function decideDoc(docId, decision){
   let remarks = null;
@@ -859,7 +877,13 @@ async function decideApp(action){
         if (!window.confirm('Approve even though the checklist is incomplete? This is recorded in the audit log.')) return;
       }
       await api('api/registrar/approve.php', { json: { application_id: id, remarks: remarks || undefined, override: blockers.length > 0 } });
-      await afterDrawerChange('Application approved.');
+      try {
+        await api('api/registrar/send_invoice.php', { json: { application_id: id } });
+        await afterDrawerChange('Application approved and invoice sent.');
+      } catch(invoiceError){
+        await afterDrawerChange('Application approved. Invoice could not be sent; issue it from this application.');
+        showMsg('drawer-error', invoiceError.message);
+      }
     } else if (action === 'flag'){
       if (!remarks) return showMsg('drawer-error', 'Add a remark telling the family what to fix.');
       await api('api/registrar/request_revision.php', { json: { application_id: id, remarks: remarks } });
@@ -873,6 +897,101 @@ async function decideApp(action){
   } catch(e){
     const extra = e.data && e.data.blockers ? ' ' + e.data.blockers.join('; ') : '';
     showMsg('drawer-error', e.message + extra);
+  }
+}
+
+// =====================================================================
+//  FILE VIEWER POPUP  (photos / PDFs open in a popup instead of a new tab)
+//  Used by the "View" / "Proof" / "View proof" links. If this code fails
+//  for any reason, the links still work as normal links (fallback).
+// =====================================================================
+let viewerUrl = null, viewerToken = 0;
+
+function ensureViewer(){
+  if ($('file-viewer')) return $('file-viewer');
+  const st = document.createElement('style');
+  st.textContent =
+    '.fv-overlay{position:fixed;inset:0;background:rgba(15,23,33,.72);z-index:80;display:none;align-items:center;justify-content:center;padding:20px;}' +
+    '.fv-overlay.open{display:flex;}' +
+    '.fv-box{background:var(--white,#fff);border-radius:10px;width:min(900px,100%);max-height:100%;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 50px rgba(15,39,72,.35);}' +
+    '.fv-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 18px;background:var(--navy-900,#0F2748);color:#fff;}' +
+    '.fv-head h3{font-size:16px;color:#fff;margin:0;}' +
+    '.fv-close{background:none;border:1px solid rgba(255,255,255,.35);color:#fff;border-radius:50%;width:32px;height:32px;cursor:pointer;font-size:14px;flex-shrink:0;}' +
+    '.fv-close:hover{border-color:var(--gold-500,#D9A441);color:var(--gold-500,#D9A441);}' +
+    '.fv-body{padding:16px;display:flex;align-items:center;justify-content:center;min-height:200px;overflow:auto;background:var(--blue-050,#F4F7FC);}' +
+    '.fv-body img{max-width:100%;max-height:72vh;object-fit:contain;border-radius:4px;background:#fff;}' +
+    '.fv-body iframe{width:100%;height:72vh;border:0;background:#fff;}' +
+    '.fv-msg{color:var(--ink-600,#4C596B);font-size:14px;margin:0;text-align:center;}';
+  document.head.appendChild(st);
+
+  const el = document.createElement('div');
+  el.id = 'file-viewer'; el.className = 'fv-overlay';
+  el.innerHTML =
+    '<div class="fv-box" role="dialog" aria-modal="true" aria-labelledby="fv-title">' +
+      '<div class="fv-head"><h3 id="fv-title">Preview</h3>' +
+      '<button type="button" class="fv-close" id="fv-close" aria-label="Close">✕</button></div>' +
+      '<div class="fv-body" id="fv-body"></div>' +
+    '</div>';
+  document.body.appendChild(el);
+  el.addEventListener('click', e => { if (e.target === el) closeViewer(); });   // click outside = close
+  $('fv-close').addEventListener('click', closeViewer);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && el.classList.contains('open')) closeViewer(); });
+  return el;
+}
+
+function closeViewer(){
+  viewerToken++;                                   // cancels any load still in progress
+  const el = $('file-viewer'); if (!el) return;
+  el.classList.remove('open');
+  $('fv-body').innerHTML = '';
+  if (viewerUrl){ URL.revokeObjectURL(viewerUrl); viewerUrl = null; }
+}
+
+// Decide image vs PDF from the real file bytes (in case the server sends a generic content type)
+async function sniffType(blob){
+  const t = (blob.type || '').toLowerCase();
+  if (t.startsWith('image/') || t === 'application/pdf') return t;
+  const b = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+  if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return 'application/pdf';
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) return 'image/png';
+  if (b[0] === 0xFF && b[1] === 0xD8) return 'image/jpeg';
+  return t;
+}
+
+// onclick="return openViewer(this, 'Title')"  -> returns false so the link does NOT open a new tab
+function openViewer(link, title){
+  try {
+    const el = ensureViewer(), body = $('fv-body'), token = ++viewerToken;
+    $('fv-title').textContent = title || 'Preview';
+    body.innerHTML = '<p class="fv-msg">Loading…</p>';
+    el.classList.add('open');
+    if (viewerUrl){ URL.revokeObjectURL(viewerUrl); viewerUrl = null; }
+
+    (async () => {
+      try {
+        const res = await fetch(link.getAttribute('href'), { credentials: 'same-origin' });
+        if (!res.ok) throw new Error('Could not load the file (' + res.status + ').');
+        const blob = await res.blob();
+        const type = await sniffType(blob);
+        if (token !== viewerToken) return;         // viewer was closed or another file opened meanwhile
+        if (type.startsWith('image/')){
+          viewerUrl = URL.createObjectURL(new Blob([blob], { type: type }));
+          body.innerHTML = '<img alt="' + esc(title || 'Uploaded file') + '">';
+          body.firstChild.src = viewerUrl;
+        } else if (type === 'application/pdf'){
+          viewerUrl = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
+          body.innerHTML = '<iframe title="' + esc(title || 'Uploaded file') + '"></iframe>';
+          body.firstChild.src = viewerUrl;
+        } else {
+          throw new Error('This file type cannot be previewed.');
+        }
+      } catch(e){
+        if (token === viewerToken) body.innerHTML = '<p class="fv-msg">' + esc(e.message || 'Could not load the file.') + '</p>';
+      }
+    })();
+    return false;
+  } catch(e){
+    return true;   // anything unexpected: fall back to the normal link behaviour
   }
 }
 
